@@ -1,31 +1,64 @@
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import pg from 'pg';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const { Pool } = pg;
 
-// Initialize database
-export async function getDb() {
-  const db = await open({
-    filename: path.join(__dirname, 'database.sqlite'),
-    driver: sqlite3.Database
-  });
+let pool;
 
-  await db.exec(`
+function getPool() {
+  if (!pool) {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      console.warn('⚠️  DATABASE_URL not set. Contact form submissions will not be persisted.');
+      return null;
+    }
+    pool = new Pool({
+      connectionString,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+    });
+  }
+  return pool;
+}
+
+// Initialize database tables
+export async function initDb() {
+  const p = getPool();
+  if (!p) return;
+
+  await p.query(`
     CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      firstName TEXT NOT NULL,
-      lastName TEXT NOT NULL,
+      id SERIAL PRIMARY KEY,
+      "firstName" TEXT NOT NULL,
+      "lastName" TEXT NOT NULL,
       email TEXT NOT NULL,
       phone TEXT NOT NULL,
       organization TEXT,
       interest TEXT,
       message TEXT NOT NULL,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      "createdAt" TIMESTAMP DEFAULT NOW()
     )
   `);
+  console.log('✅ Database connected & messages table ready');
+}
 
-  return db;
+// Insert a contact message
+export async function insertMessage({ firstName, lastName, email, phone, organization, interest, message }) {
+  const p = getPool();
+  if (!p) throw new Error('Database not configured');
+
+  const result = await p.query(
+    `INSERT INTO messages ("firstName", "lastName", email, phone, organization, interest, message)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id`,
+    [firstName, lastName, email, phone, organization, interest, message]
+  );
+  return result.rows[0].id;
+}
+
+// Get all messages
+export async function getAllMessages() {
+  const p = getPool();
+  if (!p) throw new Error('Database not configured');
+
+  const result = await p.query('SELECT * FROM messages ORDER BY "createdAt" DESC');
+  return result.rows;
 }

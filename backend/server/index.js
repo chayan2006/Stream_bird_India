@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
-import { getDb } from './db.js';
+import dotenv from 'dotenv';
+import { initDb, insertMessage, getAllMessages } from './db.js';
+
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -40,6 +43,11 @@ const authenticate = (req, res, next) => {
   }
 };
 
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Route: Submit a new contact form
 app.post('/api/contact', async (req, res) => {
   try {
@@ -50,15 +58,9 @@ app.post('/api/contact', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const db = await getDb();
-    
-    const result = await db.run(
-      `INSERT INTO messages (firstName, lastName, email, phone, organization, interest, message)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [firstName, lastName, email, phone, organization, interest, message]
-    );
+    const id = await insertMessage({ firstName, lastName, email, phone, organization, interest, message });
 
-    res.status(201).json({ success: true, id: result.lastID });
+    res.status(201).json({ success: true, id });
   } catch (error) {
     console.error('Error inserting message:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -79,8 +81,7 @@ app.post('/api/login', (req, res) => {
 // Route: Get all messages (Protected)
 app.get('/api/messages', authenticate, async (req, res) => {
   try {
-    const db = await getDb();
-    const messages = await db.all('SELECT * FROM messages ORDER BY createdAt DESC');
+    const messages = await getAllMessages();
     res.json({ success: true, messages });
   } catch (error) {
     console.error('Error fetching messages:', error);
@@ -88,6 +89,16 @@ app.get('/api/messages', authenticate, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-});
+// Initialize DB then start server
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`🚀 Server is running on http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.warn('⚠️  DB init failed, starting server without database:', err.message);
+    app.listen(PORT, () => {
+      console.log(`🚀 Server is running on http://localhost:${PORT} (no database)`);
+    });
+  });
